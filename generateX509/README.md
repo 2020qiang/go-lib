@@ -35,7 +35,7 @@ func main() {
 func main() {
 
 	_gx := &generateX509.Info{}
-	pk, err := https.Generate()
+	pk, err := _gx.Generate()
 	if err != nil {
 		log.Fatalln(err)
 	}
