@@ -2,7 +2,7 @@
  * config/ini
  *
  * create time 2022-01-21
- * update time 2022-01-22
+ * update time 2022-01-23
  */
 
 package ini
@@ -42,11 +42,14 @@ func Load(name string, _default bool) *File {
 	}
 	data.cfg = cfg
 	data._default = &sectionDefault{rawEnable: _default, cfg: cfg}
-	data._default.init()
+	data._default.init(len(data.errs) != 0)
 	return &data
 }
 
 func (f *File) SectionStrings() []string {
+	if len(f.errs) != 0 {
+		return nil
+	}
 	v := f.cfg.SectionStrings()
 	var data []string
 	for i := range v {
@@ -62,6 +65,9 @@ func (f *File) SectionStrings() []string {
 }
 
 func (f *File) Keys(sectionString string) []string {
+	if len(f.errs) != 0 {
+		return nil
+	}
 	rawKeys := f.cfg.Section(sectionString).KeyStrings()
 	if !f._default.enable(sectionString) {
 		return rawKeys
@@ -72,48 +78,43 @@ func (f *File) Keys(sectionString string) []string {
 	return uniq(rawKeys)
 }
 
-func (f *File) String(sectionString, key string) string {
-	data := f.cfg.Section(sectionString).Key(key).String()
-	if len(data) == 0 && !f._default.enable(sectionString) {
-		f.errs = append(f.errs, fmt.Errorf("%s.%s string does not exist or is empty", sectionString, key))
+func (f *File) value(sectionString, key string) string {
+	if len(f.errs) != 0 {
 		return ""
 	}
-	if len(data) == 0 && f._default.enable(sectionString) {
-		return f._default.tryString(sectionString, key)
+	v := f.cfg.Section(sectionString).Key(key).Value()
+	if len(v) == 0 {
+		if f._default.enable(sectionString) {
+			return f._default.defaultString(sectionString, key)
+		}
+		f.errs = append(f.errs, fmt.Errorf("%s.%s the original value is empty", sectionString, key))
+		return ""
 	}
-	return data
+	return v
+}
+
+func (f *File) String(sectionString, key string) string {
+	return f.value(sectionString, key)
 }
 
 func (f *File) Int(sectionString, key string) int {
-	data, err := f.cfg.Section(sectionString).Key(key).Int()
-	if err != nil && !f._default.enable(sectionString) {
-		f.errs = append(f.errs, fmt.Errorf("%s.%s string does not exist or is empty", sectionString, key))
-		return 0
-	}
+	str := f.value(sectionString, key)
+	v, err := strconv.Atoi(str)
 	if err != nil {
-		data, err = f._default.tryInt(sectionString, key)
-		if err != nil {
-			f.errs = append(f.errs, fmt.Errorf("%s.%s %s", sectionString, key, err))
-			return 0
-		}
-	}
-	return data
-}
-
-func (f *File) Duration(sectionString, key string) time.Duration {
-	data, err := f.cfg.Section(sectionString).Key(key).Duration()
-	if err != nil && !f._default.enable(sectionString) {
 		f.errs = append(f.errs, fmt.Errorf("%s.%s %s", sectionString, key, err))
 		return 0
 	}
+	return v
+}
+
+func (f *File) Duration(sectionString, key string) time.Duration {
+	str := f.value(sectionString, key)
+	v, err := time.ParseDuration(str)
 	if err != nil {
-		data, err = f._default.tryDuration(sectionString, key)
-		if err != nil {
-			f.errs = append(f.errs, fmt.Errorf("%s.%s %s", sectionString, key, err))
-			return 0
-		}
+		f.errs = append(f.errs, fmt.Errorf("%s.%s %s", sectionString, key, err))
+		return 0
 	}
-	return data
+	return v
 }
 
 func (f *File) Errors() []error {
@@ -126,7 +127,10 @@ type sectionDefault struct {
 	rawData   map[string]string
 }
 
-func (sd *sectionDefault) init() {
+func (sd *sectionDefault) init(jumpover bool) {
+	if jumpover {
+		return
+	}
 	cfg := sd.cfg.Section(defaultSection)
 	if sd.rawEnable && cfg != nil {
 		sd.rawData = make(map[string]string)
@@ -141,26 +145,11 @@ func (sd *sectionDefault) enable(sectionString string) bool {
 	return sd.rawEnable && sd.cfg != nil && sectionString != globalSection
 }
 
-func (sd *sectionDefault) tryString(sectionString, key string) string {
+func (sd *sectionDefault) defaultString(sectionString, key string) string {
 	if sectionString != defaultSection && sectionString != globalSection {
 		return sd.rawData[key]
 	}
 	return ""
-}
-
-func (sd *sectionDefault) tryInt(sectionString, key string) (int, error) {
-	if sectionString != defaultSection && sectionString != globalSection {
-		v, err := strconv.ParseInt(sd.rawData[key], 0, 64)
-		return int(v), err
-	}
-	return 0, nil
-}
-
-func (sd *sectionDefault) tryDuration(sectionString, key string) (time.Duration, error) {
-	if sectionString != defaultSection && sectionString != globalSection {
-		return time.ParseDuration(sd.rawData[key])
-	}
-	return 0, nil
 }
 
 // 配置文件名字
