@@ -2,7 +2,7 @@
  * config/ini
  *
  * create time 2022-01-21
- * update time 2022-01-23
+ * update time 2022-01-30
  */
 
 package ini
@@ -78,9 +78,9 @@ func (f *File) Keys(sectionString string) []string {
 	return uniq(rawKeys)
 }
 
-func (f *File) value(sectionString, key string) string {
+func (f *File) value(sectionString, key string) (string, bool) {
 	if len(f.errs) != 0 {
-		return ""
+		return "", false
 	}
 	v := f.cfg.Section(sectionString).Key(key).Value()
 	if len(v) == 0 {
@@ -88,17 +88,21 @@ func (f *File) value(sectionString, key string) string {
 			return f._default.defaultString(sectionString, key)
 		}
 		f.errs = append(f.errs, fmt.Errorf("%s.%s the original value is empty", sectionString, key))
-		return ""
+		return "", false
 	}
-	return v
+	return v, true
 }
 
 func (f *File) String(sectionString, key string) string {
-	return f.value(sectionString, key)
+	v, _ := f.value(sectionString, key)
+	return v
 }
 
 func (f *File) Int(sectionString, key string) int {
-	str := f.value(sectionString, key)
+	str, exsit := f.value(sectionString, key)
+	if !exsit {
+		return 0
+	}
 	v, err := strconv.Atoi(str)
 	if err != nil {
 		f.errs = append(f.errs, fmt.Errorf("%s.%s %s", sectionString, key, err))
@@ -108,7 +112,10 @@ func (f *File) Int(sectionString, key string) int {
 }
 
 func (f *File) Duration(sectionString, key string) time.Duration {
-	str := f.value(sectionString, key)
+	str, exsit := f.value(sectionString, key)
+	if !exsit {
+		return 0
+	}
 	v, err := time.ParseDuration(str)
 	if err != nil {
 		f.errs = append(f.errs, fmt.Errorf("%s.%s %s", sectionString, key, err))
@@ -145,11 +152,12 @@ func (sd *sectionDefault) enable(sectionString string) bool {
 	return sd.rawEnable && sd.cfg != nil && sectionString != globalSection
 }
 
-func (sd *sectionDefault) defaultString(sectionString, key string) string {
+func (sd *sectionDefault) defaultString(sectionString, key string) (string, bool) {
 	if sectionString != defaultSection && sectionString != globalSection {
-		return sd.rawData[key]
+		v, ok := sd.rawData[key]
+		return v, ok
 	}
-	return ""
+	return "", false
 }
 
 // 配置文件名字
