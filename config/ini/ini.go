@@ -23,10 +23,21 @@ const (
 	defaultSectionRaw = "DEFAULT"
 )
 
+type errsT struct {
+	data []error
+}
+
+func (errs *errsT) add(err error) {
+	errs.data = append(errs.data, err)
+}
+func (errs *errsT) addFormat(format string, a ...interface{}) {
+	errs.add(fmt.Errorf(format, a...))
+}
+
 type File struct {
 	cfg      *iniV1.File
-	errs     []error
-	_default *sectionDefault
+	errs     errsT
+	_default *fileDefault
 }
 
 func Load(name string, _default bool) *File {
@@ -38,16 +49,23 @@ func Load(name string, _default bool) *File {
 	var data File
 	cfg, err := iniV1.Load(name)
 	if err != nil {
-		data.errs = append(data.errs, err)
+		data.errs.add(err)
 	}
 	data.cfg = cfg
-	data._default = &sectionDefault{rawEnable: _default, cfg: cfg}
-	data._default.init(len(data.errs) != 0)
+	data._default = &fileDefault{enable: _default, cfg: cfg}
+	errs := data._default.init(len(data.errs.data) != 0)
+	for i := range errs {
+		data.errs.add(errs[i])
+	}
 	return &data
 }
 
-func (f *File) SectionStrings() []string {
-	if len(f.errs) != 0 {
+func (f *File) Errors() []error {
+	return f.errs.data
+}
+
+func (f *File) Sections() []string {
+	if len(f.errs.data) != 0 {
 		return nil
 	}
 	v := f.cfg.SectionStrings()
@@ -65,99 +83,118 @@ func (f *File) SectionStrings() []string {
 }
 
 func (f *File) Keys(sectionString string) []string {
-	if len(f.errs) != 0 {
+	if len(f.errs.data) != 0 {
 		return nil
 	}
-	rawKeys := f.cfg.Section(sectionString).KeyStrings()
-	if !f._default.enable(sectionString) {
-		return rawKeys
+
+	switch sectionString {
+	case defaultSection:
+	case defaultSectionRaw:
+	default:
+		f.errs.addFormat("%s.*  keys not allow", sectionString)
+		return nil
 	}
-	for k := range f._default.rawData {
-		rawKeys = append(rawKeys, k)
+
+	keys := f.cfg.Section(sectionString).KeyStrings()
+	for key := range f._default.values {
+		keys = append(keys, key)
 	}
-	return uniq(rawKeys)
+	return uniq(keys)
 }
 
-func (f *File) value(sectionString, key string) (string, bool) {
-	if len(f.errs) != 0 {
-		return "", false
+// 返回值 valueString success
+func (f *File) value(sectionString, key string) string {
+	str := f.cfg.Section(sectionString).Key(key).Value()
+
+	// 存在
+	if len(str) != 0 {
+		return str
 	}
-	v := f.cfg.Section(sectionString).Key(key).Value()
-	if len(v) == 0 {
-		if f._default.enable(sectionString) {
-			return f._default.defaultString(sectionString, key)
-		}
-		f.errs = append(f.errs, fmt.Errorf("%s.%s the original value is empty", sectionString, key))
-		return "", false
+
+	// 不存在但有有效的默认值
+	if len(str) == 0 && f._default.active(sectionString, key) {
+		return f._default.value(sectionString, key)
 	}
-	return v, true
+
+	// 不存在且没有默认值
+	if len(str) == 0 && !f._default.active(sectionString, key) {
+		f.errs.addFormat("%s.%s does not exist and has no default value", sectionString, key)
+		return ""
+	}
+
+	// 未知错误
+	f.errs.addFormat("%s.%s unknown error", sectionString, key)
+	return ""
 }
 
 func (f *File) String(sectionString, key string) string {
-	v, _ := f.value(sectionString, key)
-	return v
+	return f.value(sectionString, key)
 }
 
 func (f *File) Int(sectionString, key string) int {
-	str, exsit := f.value(sectionString, key)
-	if !exsit {
+	str := f.value(sectionString, key)
+	if len(str) == 0 {
 		return 0
 	}
 	v, err := strconv.Atoi(str)
 	if err != nil {
-		f.errs = append(f.errs, fmt.Errorf("%s.%s %s", sectionString, key, err))
+		f.errs.addFormat("%s.%s %s", sectionString, key, err)
 		return 0
 	}
 	return v
 }
 
 func (f *File) Duration(sectionString, key string) time.Duration {
-	str, exsit := f.value(sectionString, key)
-	if !exsit {
+	str := f.value(sectionString, key)
+	if len(str) == 0 {
 		return 0
 	}
 	v, err := time.ParseDuration(str)
 	if err != nil {
-		f.errs = append(f.errs, fmt.Errorf("%s.%s %s", sectionString, key, err))
+		f.errs.addFormat("%s.%s %s", sectionString, key, err)
 		return 0
 	}
 	return v
 }
 
-func (f *File) Errors() []error {
-	return f.errs
+type fileDefault struct {
+	enable bool
+	cfg    *iniV1.File
+	values map[string]string
 }
 
-type sectionDefault struct {
-	rawEnable bool
-	cfg       *iniV1.File
-	rawData   map[string]string
-}
-
-func (sd *sectionDefault) init(jumpover bool) {
+// 初始化获取默认值
+func (sd *fileDefault) init(jumpover bool) []error {
 	if jumpover {
-		return
+		return nil
 	}
+	var errs []error
 	cfg := sd.cfg.Section(defaultSection)
-	if sd.rawEnable && cfg != nil {
-		sd.rawData = make(map[string]string)
+	if sd.enable && cfg != nil {
+		sd.values = make(map[string]string)
 		keys := cfg.Keys()
 		for i := range keys {
-			sd.rawData[keys[i].Name()] = keys[i].Value()
+			v := keys[i].Value()
+			if len(v) == 0 {
+				errs = append(errs, fmt.Errorf("default.%s string is empty", keys[i].Name()))
+				continue
+			}
+			sd.values[keys[i].Name()] = v
 		}
 	}
+	return errs
 }
 
-func (sd *sectionDefault) enable(sectionString string) bool {
-	return sd.rawEnable && sd.cfg != nil && sectionString != globalSection
+// 默认值 [default] 是否已配置上并可用
+func (sd *fileDefault) active(sectionString, key string) bool {
+	section := sd.enable && sd.cfg != nil && sectionString != globalSection && sectionString != defaultSection
+	_, ok := sd.values[key]
+	return section && ok
 }
 
-func (sd *sectionDefault) defaultString(sectionString, key string) (string, bool) {
-	if sectionString != defaultSection && sectionString != globalSection {
-		v, ok := sd.rawData[key]
-		return v, ok
-	}
-	return "", false
+// 默认值的有效值
+func (sd *fileDefault) value(sectionString, key string) string {
+	return sd.values[key]
 }
 
 // 配置文件名字
