@@ -2,7 +2,7 @@
  * config/ini
  *
  * create time 2022-01-21
- * update time 2022-01-30
+ * update time 2022-01-31
  */
 
 package ini
@@ -104,6 +104,9 @@ func (f *File) Keys(sectionString string) []string {
 
 // 返回值 valueString success
 func (f *File) value(sectionString, key string) string {
+	if f.cfg == nil {
+		return ""
+	}
 	str := f.cfg.Section(sectionString).Key(key).Value()
 
 	// 存在
