@@ -90,7 +90,6 @@ func (f *File) Keys(sectionString string) []string {
 	switch sectionString {
 	case defaultSection:
 	case defaultSectionRaw:
-	default:
 		f.errs.addFormat("%s.*  keys not allow", sectionString)
 		return nil
 	}
