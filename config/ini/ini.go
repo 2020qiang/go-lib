@@ -2,7 +2,7 @@
  * config/ini
  *
  * create time 2022-01-21
- * update time 2022-01-31
+ * update time 2022-03-16
  */
 
 package ini
@@ -157,6 +157,24 @@ func (f *File) Duration(sectionString, key string) time.Duration {
 		return 0
 	}
 	return v
+}
+
+func (f *File) Bool(sectionString, key string) bool {
+	str := f.value(sectionString, key)
+	if len(str) == 0 {
+		f.errs.addFormat("%s.%s %s", sectionString, key, "value is empty")
+		return false
+	}
+
+	if str == "true" {
+		return true
+	}
+	if str == "false" {
+		return false
+	}
+
+	f.errs.addFormat("%s.%s %s", sectionString, key, "non-valid value")
+	return false
 }
 
 type fileDefault struct {
