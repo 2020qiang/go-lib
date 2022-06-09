@@ -146,6 +146,19 @@ func (f *File) Int(sectionString, key string) int {
 	return v
 }
 
+func (f *File) Float64(sectionString, key string) float64 {
+	str := f.value(sectionString, key)
+	if len(str) == 0 {
+		return 0
+	}
+	v, err := strconv.ParseFloat(str, 64)
+	if err != nil {
+		f.errs.addFormat("%s.%s %s", sectionString, key, err)
+		return 0
+	}
+	return v
+}
+
 func (f *File) Duration(sectionString, key string) time.Duration {
 	str := f.value(sectionString, key)
 	if len(str) == 0 {
